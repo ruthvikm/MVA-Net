@@ -1,18 +1,10 @@
-#!/usr/bin/python
-# -*- coding: UTF-8 -*-
-# @Time    : 2020/10/01
-# @Author  : jet li
-# @Email   : jet_uestc@hotmail.com
-# @File    : MVA_Net.py
-# @SoftWare: PyCharm
-
-
 import math
 
 import torch
 from torch import nn
 import torch.utils.model_zoo as model_zoo
 from torchvision.models import alexnet
+from TransformerBlock import TransformerBlock
 
 model_urls = {
     'resnet18': 'https://download.pytorch.org/models/resnet18-5c106cde.pth',
@@ -456,6 +448,11 @@ class MVA_Net(nn.Module):
         self.batch_size = batch_size
         super(MVA_Net, self).__init__()
 
+        self.front_transformer = TransformerBlock(embed_size=1024, heads=8, dropout=0.1, forward_expansion=4)
+        self.rear_transformer = TransformerBlock(embed_size=256, heads=8, dropout=0.1, forward_expansion=4)
+        self.left_transformer = TransformerBlock(embed_size=256, heads=8, dropout=0.1, forward_expansion=4)
+        self.right_transformer = TransformerBlock(embed_size=256, heads=8, dropout=0.1, forward_expansion=4)
+
         self.front = nn.Sequential(
             nn.Linear(1000, 1024),
             nn.LeakyReLU(inplace=True),
@@ -526,29 +523,51 @@ class MVA_Net(nn.Module):
         tomtom_map = self.map_backbone(map_in)
         map_feature = self.map(tomtom_map)
 
-        # sight
+        # # sight
         front_feature = self.front(front)
         front_feature = torch.stack(
             tuple([front_feature[x:x + batch_size * 4:batch_size] for x in range(batch_size)])).permute(1, 0, 2)
         front_feature_lstm, (hn, cn) = self.front_lstm(front_feature)
 
+        # rear_feature = self.rear(rear)
+        # rear_feature = torch.stack(
+        #     tuple([rear_feature[x:x + batch_size * 4:batch_size] for x in range(batch_size)])).permute(1, 0, 2)
+        # rear_feature, (hn, cn) = self.rear_lstm(rear_feature)
+
+        # left_feature = self.left(left)
+        # left_feature = torch.stack(
+        #     tuple([left_feature[x:x + batch_size * 4:batch_size] for x in range(batch_size)])).permute(1, 0, 2)
+        # left_feature, (hn, cn) = self.left_lstm(left_feature)
+
+        # right_feature = self.right(right)
+        # right_feature = torch.stack(
+        #     tuple([right_feature[x:x + batch_size * 4:batch_size] for x in range(batch_size)])).permute(1, 0, 2)
+        # right_feature, (hn, cn) = self.right_lstm(right_feature)
+
+        front_feature = self.front(front)
+        # Prepare for transformer (reshape, add positional encodings if necessary)
+        front_feature = front_feature.view(self.batch_size, -1, 1024)  # Adjust shape as necessary
+        front_feature = self.front_transformer(front_feature, front_feature, front_feature, None)
+
         rear_feature = self.rear(rear)
-        rear_feature = torch.stack(
-            tuple([rear_feature[x:x + batch_size * 4:batch_size] for x in range(batch_size)])).permute(1, 0, 2)
-        rear_feature, (hn, cn) = self.rear_lstm(rear_feature)
+        # Prepare for transformer (reshape, add positional encodings if necessary)
+        rear_feature = rear_feature.view(self.batch_size, -1, 256)  # Adjust shape as necessary
+        rear_feature = self.rear_transformer(rear_feature, rear_feature, rear_feature, None)
 
         left_feature = self.left(left)
-        left_feature = torch.stack(
-            tuple([left_feature[x:x + batch_size * 4:batch_size] for x in range(batch_size)])).permute(1, 0, 2)
-        left_feature, (hn, cn) = self.left_lstm(left_feature)
+        # Prepare for transformer (reshape, add positional encodings if necessary)
+        left_feature = left_feature.view(self.batch_size, -1, 256)  # Adjust shape as necessary
+        left_feature = self.left_transformer(left_feature, left_feature, left_feature, None)
 
         right_feature = self.right(right)
-        right_feature = torch.stack(
-            tuple([right_feature[x:x + batch_size * 4:batch_size] for x in range(batch_size)])).permute(1, 0, 2)
-        right_feature, (hn, cn) = self.right_lstm(right_feature)
+        # Prepare for transformer (reshape, add positional encodings if necessary)
+        right_feature = right_feature.view(self.batch_size, -1, 256)  # Adjust shape as necessary
+        right_feature = self.right_transformer(right_feature, right_feature, right_feature, None)
+
+        # return front_feature, rear_feature, left_feature, right_feature
 
         concat = torch.cat(
-            (front_feature_lstm[-1], front_feature[-1], rear_feature[-1], left_feature[-1], right_feature[-1],
+            (front_feature_lstm[-1],front_feature[-1], rear_feature[-1], left_feature[-1], right_feature[-1],
              map_feature, speed_feature
              ), 1).squeeze(1)
 
@@ -559,16 +578,20 @@ class MVA_Net(nn.Module):
 
 
 if __name__ == '__main__':
-    front_in = torch.ones(32, 3, 224, 224)
-    rear_in  = 2 * torch.ones(32, 3, 224, 224)
-    left_in  = 3 * torch.ones(32, 3, 224, 224)
-    right_in = 4 * torch.ones(32, 3, 224, 224)
-    map_in   = 5 * torch.ones(8, 3, 224, 224)
-    speed_in = torch.ones(8, 1)
+    # Define a consistent batch size for all inputs
+    batch_size = 8
 
-    model = MVA_Net(8)
+    # Creating input tensors with the same batch size
+    front_in = torch.ones(batch_size, 3, 224, 224)
+    rear_in  = 2 * torch.ones(batch_size, 3, 224, 224)
+    left_in  = 3 * torch.ones(batch_size, 3, 224, 224)
+    right_in = 4 * torch.ones(batch_size, 3, 224, 224)
+    map_in   = 5 * torch.ones(batch_size, 3, 224, 224)
+    speed_in = torch.ones(batch_size, 1)
+
+    # Instantiate the model with the consistent batch size
+    model = MVA_Net(batch_size)
     steer, speed = model(front_in, rear_in, left_in, right_in, map_in, speed_in)
 
     print("steer size:", steer.size())
     print("speed size:", speed.size())
-

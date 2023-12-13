@@ -1,11 +1,3 @@
-#!/usr/bin/python
-# -*- coding: UTF-8 -*-
-# @Time    : 2020/10/01
-# @Author  : jet li
-# @Email   : jet_uestc@hotmail.com
-# @File    : MVA_Net.py
-# @SoftWare: PyCharm
-
 import math
 
 import torch
